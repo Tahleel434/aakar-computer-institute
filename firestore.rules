@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'tahleel.shikalgar@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    // Validation Helpers
+    function isValidCourse(data) {
+      return data.title is string && data.title.size() >= 2 && data.title.size() <= 100 &&
+             data.category in ['programming', 'design', 'digital-marketing', 'others'] &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+             (!('duration' in data) || (data.duration is string && data.duration.size() <= 50)) &&
+             (!('price' in data) || (data.price is string && data.price.size() <= 50)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 500));
+    }
+
+    function isValidEnquiry(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 8 && data.phone.size() <= 20 &&
+             data.email is string && data.email.size() <= 120 && data.email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+             data.course is string && data.course.size() >= 2 && data.course.size() <= 100 &&
+             data.status in ['new', 'contacted', 'converted', 'closed'] &&
+             (!('preferredTimeSlot' in data) || (data.preferredTimeSlot is string && data.preferredTimeSlot.size() <= 100)) &&
+             (!('message' in data) || (data.message is string && data.message.size() <= 1000));
+    }
+
+    function isValidTestimonial(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+             data.review is string && data.review.size() >= 5 && data.review.size() <= 1000 &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             (!('course' in data) || (data.course is string && data.course.size() <= 100));
+    }
+
+    // Public courses
+    match /courses/{courseId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(courseId) && isValidCourse(incoming()) && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidId(courseId) && isValidCourse(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(courseId);
+    }
+
+    // Public student testimonials
+    match /testimonials/{testimonialId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(testimonialId) && isValidTestimonial(incoming()) && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidId(testimonialId) && isValidTestimonial(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(testimonialId);
+    }
+
+    // Private student enquiries
+    match /enquiries/{enquiryId} {
+      // Visitors can submit an enquiry through the form
+      allow create: if isValidId(enquiryId) && isValidEnquiry(incoming()) && incoming().status == 'new' && incoming().createdAt == request.time;
+      // Visitors CANNOT read, list, update, or delete
+      allow read, delete: if isAdmin();
+      allow update: if isAdmin() && isValidId(enquiryId) && isValidEnquiry(incoming()) && incoming().createdAt == existing().createdAt;
+    }
+
+    // Admin accounts
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow write: if isAdmin();
+    }
+  }
+}
